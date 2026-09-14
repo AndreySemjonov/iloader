@@ -106,7 +106,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 [[package]]
 name = "apple-codesign"
 version = "0.1.0"
-source = "git+https://github.com/nab138/apple-crates#5da0b8df9b202434b1eff2700059b1ee142592ac"
+source = "git+https://github.com/Dadoum/apple-crates#16110817b2687fed397ff2e04b00f3a27a30360e"
 dependencies = [
  "byteorder",
  "cms 0.2.3",
@@ -2751,7 +2751,7 @@ dependencies = [
 [[package]]
 name = "isideload"
 version = "0.3.17"
-source = "git+https://github.com/nab138/isideload?branch=apple-codesign-quick#f6a4d5dba717d72fc2af63eaba26b27ba44116be"
+source = "git+https://github.com/Rzbck/isideload?rev=32c1da3da5424c3d5b553ca4dcb0417a23d7e1c8#32c1da3da5424c3d5b553ca4dcb0417a23d7e1c8"
 dependencies = [
  "aes 0.9.3",
  "aes-gcm",
