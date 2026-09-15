@@ -106,29 +106,34 @@ pub async fn sideload(
         let signed_bundle = Bundle::new(signed_app_path.clone())?;
         let watch_apps = signed_bundle.watch_apps().to_vec();
 
-        if !watch_apps.is_empty() {
-            info!("Installing Apple Watch companion app through the existing RSD tunnel...");
+        let watch_result: Result<(), AppError> = async {
+            if !watch_apps.is_empty() {
+                info!("Installing Apple Watch companion app through the existing RSD tunnel...");
 
-            let watch_provider = get_provider(&device.info).await?;
-            let iphone_pairing = watch_provider.get_pairing_file().await.map_err(|e| {
-                AppError::LockdownPairing(
-                    "Failed to get pairing record for Apple Watch RSD install".into(),
-                    e.to_string(),
+                let watch_provider = get_provider(&device.info).await?;
+                let iphone_pairing = watch_provider.get_pairing_file().await.map_err(|e| {
+                    AppError::LockdownPairing(
+                        "Failed to get pairing record for Apple Watch RSD install".into(),
+                        e.to_string(),
+                    )
+                })?;
+
+                install_watch_apps_rsd(
+                    &mut rsd_provider,
+                    &mut handshake,
+                    &iphone_pairing,
+                    &watch_apps,
+                    "iloader",
+                    |progress| {
+                        info!("Installing Apple Watch app over RSD: {}%", progress);
+                    },
                 )
-            })?;
+                .await?;
+            }
 
-            install_watch_apps_rsd(
-                &mut rsd_provider,
-                &mut handshake,
-                &iphone_pairing,
-                &watch_apps,
-                "iloader",
-                |progress| {
-                    info!("Installing Apple Watch app over RSD: {}%", progress);
-                },
-            )
-            .await?;
+            Ok(())
         }
+        .await;
 
         if let Err(e) = tokio::fs::remove_dir_all(&signed_app_path).await {
             warn!(
@@ -138,6 +143,7 @@ pub async fn sideload(
             );
         }
 
+        watch_result?;
         return Ok(special);
     }
 
