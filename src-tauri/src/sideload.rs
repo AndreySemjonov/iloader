@@ -118,6 +118,7 @@ pub async fn sideload(
                     )
                 })?;
 
+                info!("Using RSD-native CompanionProxy for Apple Watch install");
                 install_watch_apps_rsd(
                     &mut rsd_provider,
                     &mut handshake,
