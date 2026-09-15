@@ -1,6 +1,8 @@
 name: Watch RSD Windows validation
 on:
   workflow_dispatch:
+  push:
+    branches: ['codex/validate-watch-rsd']
 permissions:
   contents: read
 jobs:
