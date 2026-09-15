@@ -1,0 +1,43 @@
+name: Develop Windows build
+
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: develop-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - uses: ilammy/msvc-dev-cmd@v1
+      - run: choco install strawberryperl make --no-progress
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run tauri build --no-bundle --config src-tauri/ci.conf.json -- --locked
+      - name: Record build revision and checksum
+        shell: pwsh
+        run: |
+          $artifact = 'src-tauri/target/release/iloader.exe'
+          $digest = (Get-FileHash -LiteralPath $artifact -Algorithm SHA256).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText('src-tauri/target/release/SHA256SUMS', "$digest  iloader.exe`n")
+          [IO.File]::WriteAllText('src-tauri/target/release/BUILD_COMMIT', "$env:GITHUB_SHA`n")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iloader-develop-windows
+          if-no-files-found: error
+          path: |
+            src-tauri/target/release/iloader.exe
+            src-tauri/target/release/SHA256SUMS
+            src-tauri/target/release/BUILD_COMMIT

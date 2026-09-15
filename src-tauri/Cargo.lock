@@ -2751,7 +2751,7 @@ dependencies = [
 [[package]]
 name = "isideload"
 version = "0.3.17"
-source = "git+https://github.com/AndreySemjonov/isideload?rev=d8ea80aedd71aa67b94a10c711d9335069b026ee#d8ea80aedd71aa67b94a10c711d9335069b026ee"
+source = "git+https://github.com/AndreySemjonov/isideload?rev=3e2cb352af76546c516e52961a11b06ea02a736d#3e2cb352af76546c516e52961a11b06ea02a736d"
 dependencies = [
  "aes 0.9.3",
  "aes-gcm",
