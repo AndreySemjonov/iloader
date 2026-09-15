@@ -26,6 +26,9 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run tauri build --no-bundle --config src-tauri/ci.conf.json -- --locked
+      - name: Check SideStore command stack size
+        working-directory: src-tauri
+        run: cargo test --release --locked --lib sidestore_command_future_fits_main_thread_stack -- --nocapture
       - name: Record build revision and checksum
         shell: pwsh
         run: |

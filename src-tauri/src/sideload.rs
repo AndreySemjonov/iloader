@@ -210,6 +210,26 @@ pub async fn install_sidestore_operation(
     nightly: bool,
     live_container: bool,
 ) -> Result<(), AppError> {
+    // Keep the large signing/install future out of Tauri's main-thread command frame.
+    Box::pin(install_sidestore_operation_impl(
+        handle,
+        window,
+        device_state,
+        sideloader_state,
+        nightly,
+        live_container,
+    ))
+    .await
+}
+
+async fn install_sidestore_operation_impl(
+    handle: AppHandle,
+    window: Window,
+    device_state: State<'_, DeviceInfoMutex>,
+    sideloader_state: State<'_, SideloaderMutex>,
+    nightly: bool,
+    live_container: bool,
+) -> Result<(), AppError> {
     let op = Operation::new("install_sidestore".to_string(), &window);
     op.start("download")?;
     // TODO: Cache & check version to avoid re-downloading
@@ -312,4 +332,35 @@ pub async fn download(url: impl AsRef<str>, dest: &PathBuf) -> Result<(), AppErr
     })?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sidestore_future_size<F, Fut>(_: F) -> usize
+    where
+        F: FnOnce(
+            AppHandle,
+            Window,
+            State<'static, DeviceInfoMutex>,
+            State<'static, SideloaderMutex>,
+            bool,
+            bool,
+        ) -> Fut,
+    {
+        std::mem::size_of::<Fut>()
+    }
+
+    #[test]
+    fn sidestore_command_future_fits_main_thread_stack() {
+        // Measure the actual command future without a device, account, or network call.
+        let command = sidestore_future_size(install_sidestore_operation);
+        let implementation = sidestore_future_size(install_sidestore_operation_impl);
+        println!("SideStore command future: {command} bytes; unboxed implementation: {implementation} bytes");
+        assert!(
+            command <= 16 * 1024,
+            "SideStore command future is {command} bytes; keep nested install work boxed"
+        );
+    }
 }
