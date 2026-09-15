@@ -7,11 +7,12 @@ use crate::{
     pairing::{get_sidestore_info, place_file},
     wifi_rsd::open_rsd_tunnel,
 };
+use idevice::provider::IdeviceProvider;
 use isideload::{
     dev::{device_type::DeveloperDeviceType, devices::DevicesApi},
     sideload::{
         application::SpecialApp, bundle::Bundle, install::install_app_rsd, sideloader::Sideloader,
-        watch_install::install_watch_apps,
+        watch_install::install_watch_apps_rsd,
     },
 };
 use tauri::{AppHandle, Manager, State, Window};
@@ -106,13 +107,26 @@ pub async fn sideload(
         let watch_apps = signed_bundle.watch_apps().to_vec();
 
         if !watch_apps.is_empty() {
-            info!("Installing Apple Watch companion app after RSD iPhone install...");
+            info!("Installing Apple Watch companion app through the existing RSD tunnel...");
 
             let watch_provider = get_provider(&device.info).await?;
+            let iphone_pairing = watch_provider.get_pairing_file().await.map_err(|e| {
+                AppError::LockdownPairing(
+                    "Failed to get pairing record for Apple Watch RSD install".into(),
+                    e.to_string(),
+                )
+            })?;
 
-            install_watch_apps(&watch_provider, &watch_apps, "iloader", |progress| {
-                info!("Installing Apple Watch app over Network: {}%", progress);
-            })
+            install_watch_apps_rsd(
+                &mut rsd_provider,
+                &mut handshake,
+                &iphone_pairing,
+                &watch_apps,
+                "iloader",
+                |progress| {
+                    info!("Installing Apple Watch app over RSD: {}%", progress);
+                },
+            )
             .await?;
         }
 
