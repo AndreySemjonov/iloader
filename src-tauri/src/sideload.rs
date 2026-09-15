@@ -9,7 +9,10 @@ use crate::{
 };
 use isideload::{
     dev::{device_type::DeveloperDeviceType, devices::DevicesApi},
-    sideload::{application::SpecialApp, install::install_app_rsd, sideloader::Sideloader},
+    sideload::{
+        application::SpecialApp, bundle::Bundle, install::install_app_rsd, sideloader::Sideloader,
+        watch_install::install_watch_apps,
+    },
 };
 use tauri::{AppHandle, Manager, State, Window};
 use tracing::{info, warn};
@@ -98,6 +101,20 @@ pub async fn sideload(
             },
         )
         .await?;
+
+        let signed_bundle = Bundle::new(signed_app_path.clone())?;
+        let watch_apps = signed_bundle.watch_apps().to_vec();
+
+        if !watch_apps.is_empty() {
+            info!("Installing Apple Watch companion app after RSD iPhone install...");
+
+            let watch_provider = get_provider(&device.info).await?;
+
+            install_watch_apps(&watch_provider, &watch_apps, "iloader", |progress| {
+                info!("Installing Apple Watch app over Network: {}%", progress);
+            })
+            .await?;
+        }
 
         if let Err(e) = tokio::fs::remove_dir_all(&signed_app_path).await {
             warn!(
