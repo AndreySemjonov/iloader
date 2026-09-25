@@ -23,6 +23,10 @@ const WATCH_FORWARD_CONNECT_DELAY_MS: u64 = 50;
 const WATCH_INSTALL_ATTEMPTS: usize = 7;
 const WATCH_INSTALL_INITIAL_RETRY_DELAY_MS: u64 = 400;
 const WATCH_INSTALL_MAX_RETRY_DELAY_MS: u64 = 2500;
+/// watchOS reports progress while it installs. Without any answer for this long
+/// the Watch is unreachable (asleep, out of range) and would otherwise leave the
+/// install waiting forever.
+const WATCH_RESPONSE_TIMEOUT: Duration = Duration::from_secs(180);
 const CENTRAL_DIRECTORY_HEADER: &[u8] = &[0x50, 0x4b, 0x01, 0x02];
 const ZIP_EXTRA: &[u8] = &[
     0x55, 0x54, 0x0d, 0x00, 0x07, 0xf3, 0xa2, 0xec, 0x60, 0xf6, 0xa2, 0xec, 0x60, 0xf3,
@@ -699,7 +703,13 @@ async fn wait_for_watch_install(
     progress_callback: &(impl Fn(u64) + Send + Sync),
 ) -> Result<(), Report> {
     loop {
-        let response = read_prefixed_plist(connection).await?;
+        let response = tokio::time::timeout(WATCH_RESPONSE_TIMEOUT, read_prefixed_plist(connection))
+            .await
+            .map_err(|_| {
+                report!(
+                    "The Apple Watch didn't respond for 3 minutes. Keep it unlocked and near the iPhone, then try again."
+                )
+            })??;
 
         if response
             .get("Status")
