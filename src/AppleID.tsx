@@ -142,11 +142,15 @@ export const AppleID = ({
                         className="action-button primary"
                         onClick={() => {
                           let promise = async () => {
-                            await invoke("login_stored", {
-                              email: id,
-                              anisetteServer,
-                            });
-                            setForceUpdateIds((v) => v + 1);
+                            try {
+                              await invoke("login_stored", {
+                                email: id,
+                                anisetteServer,
+                              });
+                            } finally {
+                              // A missing keyring entry removes stale saved metadata.
+                              setForceUpdateIds((v) => v + 1);
+                            }
                           };
                           toast.promise(promise, {
                             loading: t("apple_id.logging_in"),

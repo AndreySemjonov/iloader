@@ -22,11 +22,11 @@ import { AppIds } from "./pages/AppIds";
 import { Settings } from "./pages/Settings";
 import { Pairing } from "./pages/Pairing";
 import { getVersion } from "@tauri-apps/api/app";
-import { checkForUpdates } from "./update";
 import logo from "./iloader.svg";
 import { GlassCard } from "./components/GlassCard";
 import { useTranslation } from "react-i18next";
 import { usePlatform } from "./PlatformContext";
+import { RenewalSetups } from "./components/RenewalSetups";
 
 function App() {
   const { t } = useTranslation();
@@ -66,10 +66,6 @@ function App() {
       setVersion(version);
     };
     fetchVersion();
-  }, []);
-
-  useEffect(() => {
-    checkForUpdates();
   }, []);
 
   const shortcutLabel = useCallback(
@@ -299,6 +295,15 @@ function App() {
             </GlassCard>
           </section>
           <section className="workspace-section">
+            <GlassCard className="panel">
+              <RenewalSetups device={selectedDevice} account={loggedInAs} installOnce={async () => {
+                if (!ensuredLoggedIn() || !ensureSelectedDevice()) return;
+                const path = await openFileDialog({ multiple: false, filters: [{ name: t("app.ipa_files"), extensions: ["ipa"] }] });
+                if (typeof path === "string") await startOperation(sideloadOperation, { appPath: path });
+              }} />
+            </GlassCard>
+          </section>
+          <section className="workspace-section">
             <div className="section-header">
               <p className="section-label">{t("app.installers")}</p>
               <span className="section-hint">{t("app.choose_build")}</span>
@@ -360,26 +365,6 @@ function App() {
                   }}
                 >
                   {t("app.livecontainer_sidestore_nightly")}
-                </button>
-                <button
-                  onClick={async () => {
-                    if (!ensuredLoggedIn() || !ensureSelectedDevice()) return;
-                    let path = await openFileDialog({
-                      multiple: false,
-                      filters: [
-                        { name: t("app.ipa_files"), extensions: ["ipa"] },
-                      ],
-                    });
-                    if (!path) return;
-                    startOperation(sideloadOperation, {
-                      appPath: path as string,
-                    }).catch((e) => {
-                      console.log(e.type);
-                      console.error(e.message);
-                    });
-                  }}
-                >
-                  {t("app.import_ipa")}
                 </button>
               </div>
             </GlassCard>

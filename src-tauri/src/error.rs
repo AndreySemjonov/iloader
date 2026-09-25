@@ -8,6 +8,10 @@ use serde::ser::{SerializeStruct, Serializer};
 #[strum(serialize_all = "snake_case")]
 pub enum AppError {
     #[error("{0}")]
+    ManualInstall(crate::manual_install::Detail),
+    #[error("{0}")]
+    ManualSigning(crate::manual_signing::Detail),
+    #[error("{0}")]
     MaxApps(String),
     #[error("{0}")]
     NotEnoughAppIds(String),

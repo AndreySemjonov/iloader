@@ -4,6 +4,80 @@ use tauri::{AppHandle, Emitter};
 use tracing_subscriber::layer::Context;
 use tracing_subscriber::{Layer, registry::LookupSpan};
 
+/// Protocol dependencies can log entire pairing/plist/authentication payloads.
+/// This is a hard global ceiling, independent of optional sink verbosity filters.
+pub fn safe_log_metadata(metadata: &tracing::Metadata<'_>) -> bool {
+    let protocol_dependency = ["idevice", "isideload", "apple_codesign", "keyring"]
+        .iter()
+        .any(|prefix| {
+            metadata.target() == *prefix || metadata.target().starts_with(&format!("{prefix}::"))
+        });
+    *metadata.level() <= tracing::Level::DEBUG
+        && !(protocol_dependency && *metadata.level() > tracing::Level::WARN)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{io::Write, sync::Mutex};
+    use tracing_subscriber::layer::SubscriberExt;
+
+    #[derive(Clone)]
+    struct Capture(Arc<Mutex<Vec<u8>>>);
+    impl Write for Capture {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    #[test]
+    fn pairing_dictionary_debug_never_reaches_log_sink() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let writer = Capture(output.clone());
+        let frontend_records = Arc::new(Mutex::new(Vec::new()));
+        let records = frontend_records.clone();
+        let frontend = FrontendLoggingLayer {
+            emit: Arc::new(move |record| records.lock().unwrap().push(record)),
+        };
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_subscriber::filter::filter_fn(safe_log_metadata))
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_ansi(false)
+                    .with_writer(move || writer.clone())
+                    .with_filter(tracing_subscriber::filter::LevelFilter::TRACE),
+            )
+            .with(frontend.with_filter(tracing_subscriber::filter::LevelFilter::TRACE));
+        struct MustNotFormat;
+        impl std::fmt::Debug for MustNotFormat {
+            fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                panic!("Sensitive field formatted before privacy filter");
+            }
+        }
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::debug!(target: "idevice::remote_pairing::rp_pairing_file", payload = ?MustNotFormat, "test-sensitive-dictionary-sentinel");
+            tracing::debug!(target: "idevice", payload = ?MustNotFormat, "test-wire-plist-sentinel");
+            tracing::trace!(target: "idevice::remote_pairing::socket", payload = ?MustNotFormat, "test-pairing-wire-sentinel");
+            tracing::debug!(target: "isideload::anisette::remote_v3", payload = ?MustNotFormat, "test-provisioning-sentinel");
+            tracing::debug!(target: "isideload::auth::apple_account", payload = ?MustNotFormat, "test-auth-sentinel");
+            tracing::info!(target: "iloader", "safe-operation-progress");
+        });
+        let bytes = output.lock().unwrap();
+        let text = String::from_utf8_lossy(&bytes);
+        assert!(!text.contains("test-sensitive-dictionary-sentinel"));
+        assert!(text.contains("safe-operation-progress"));
+        assert_eq!(frontend_records.lock().unwrap().len(), 1);
+        assert!(
+            frontend_records.lock().unwrap()[0]
+                .message
+                .contains("safe-operation-progress")
+        );
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtendedLogRecord {
     pub level: u8,
@@ -13,13 +87,15 @@ pub struct ExtendedLogRecord {
 }
 
 pub struct FrontendLoggingLayer {
-    app_handle: Arc<AppHandle>,
+    emit: Arc<dyn Fn(ExtendedLogRecord) + Send + Sync>,
 }
 
 impl FrontendLoggingLayer {
     pub fn new(app_handle: AppHandle) -> Self {
         Self {
-            app_handle: Arc::new(app_handle),
+            emit: Arc::new(move |record| {
+                let _ = app_handle.emit("log-record", &record);
+            }),
         }
     }
 }
@@ -102,6 +178,6 @@ where
             timestamp,
         };
 
-        let _ = self.app_handle.emit("log-record", &record);
+        (self.emit)(record);
     }
 }

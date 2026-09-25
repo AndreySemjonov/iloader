@@ -215,7 +215,11 @@ pub async fn place_pairing_cmd(
     device_state: State<'_, DeviceInfoMutex>,
     bundle_id: String,
     path: String,
+    operation: State<'_, crate::wifi_pairing::PairingOperation>,
 ) -> Result<(), AppError> {
+    let _operation = operation
+        .try_lock()
+        .map_err(|_| AppError::Misc("Device setup is busy. Wait for it to finish.".into()))?;
     let device = {
         let device_guard = device_state.lock().unwrap();
         match &*device_guard {
@@ -234,7 +238,11 @@ pub async fn place_pairing_cmd(
 pub async fn export_pairing_cmd(
     device_state: State<'_, DeviceInfoMutex>,
     app: AppHandle,
+    operation: State<'_, crate::wifi_pairing::PairingOperation>,
 ) -> Result<(), AppError> {
+    let _operation = operation
+        .try_lock()
+        .map_err(|_| AppError::Misc("Device setup is busy. Wait for it to finish.".into()))?;
     let device = {
         let device_guard = device_state.lock().unwrap();
         match &*device_guard {
@@ -281,7 +289,7 @@ fn build_pairing_storage_entry(app: &AppHandle, keyring_enabled: bool) -> Pairin
     }
 }
 
-fn with_pairing_storage<T>(
+pub(crate) fn with_pairing_storage<T>(
     app: &AppHandle,
     f: impl FnOnce(&dyn SideloadingStorage) -> Result<T, AppError>,
 ) -> Result<T, AppError> {
@@ -342,10 +350,7 @@ pub async fn pairing_file(
         match plist::Value::from_reader_xml(std::io::Cursor::new(&cached)) {
             Ok(plist) => plist,
             Err(e) => {
-                warn!(
-                    "Cached RPPairing is invalid for device {}, regenerating: {}",
-                    device.name, e
-                );
+                warn!("Cached RPPairing is invalid for the device, regenerating: {e}");
 
                 let (generated_plist, generated_bytes) = tokio::select! {
                     _ = cancel.cancelled() => {
@@ -368,7 +373,7 @@ pub async fn pairing_file(
             }
         }
     } else {
-        info!("Generating new RPPairing for device {}", device.name);
+        info!("Generating new RPPairing for the device");
 
         let (generated_plist, generated_bytes) = tokio::select! {
             _ = cancel.cancelled() => {
@@ -400,6 +405,73 @@ pub async fn pairing_file(
     Ok(plist_to_xml_bytes(&pairing_plist))
 }
 
+/// Wi-Fi selection is a read-only operation. Reuse the original export pairing
+/// when present, otherwise the saved direct RemotePairing identity. Never enable
+/// debugging, generate trust, persist records or repair malformed records here.
+pub async fn existing_wifi_pairing_file(
+    app: &AppHandle,
+    device: &DeviceInfo,
+) -> Result<Vec<u8>, AppError> {
+    let mut mux = crate::device::get_usbmuxd().await?;
+    let mut lockdown = mux.get_pair_record(&device.udid).await.map_err(|_| {
+        AppError::RemotePairing(
+            "Saved Wi-Fi pairing is unavailable. Complete initial setup over USB.".into(),
+        )
+    })?;
+    lockdown.udid = Some(device.udid.clone());
+    let lockdown_bytes = lockdown
+        .serialize()
+        .map_err(|_| AppError::RemotePairing("Saved lockdown pairing is unreadable".into()))?;
+    if is_ios_version_below(&device.version, 17, 4) {
+        return Ok(lockdown_bytes);
+    }
+    let cache_key = format!("rppairing_file_{}", device.udid);
+    let cached = with_pairing_storage(app, |storage| {
+        storage
+            .retrieve_data(&cache_key)
+            .map_err(|_| AppError::RemotePairing("Unable to read saved pairing storage".into()))
+    })?;
+    let remote = match cached {
+        Some(bytes) if !bytes.is_empty() => bytes,
+        _ => crate::wifi_rsd::load_wifi_pairing(app, &device.udid)?
+            .ok_or_else(|| {
+                AppError::RemotePairing(
+                    "Saved Wi-Fi pairing is unavailable. Set up Wi-Fi over USB first.".into(),
+                )
+            })?
+            .to_bytes(),
+    };
+    merge_existing_pairing(&lockdown_bytes, &remote)
+}
+
+fn merge_existing_pairing(lockdown: &[u8], remote: &[u8]) -> Result<Vec<u8>, AppError> {
+    let invalid = || {
+        AppError::RemotePairing("Saved Wi-Fi pairing is unreadable. Repair initial setup over USB; no changes were made.".into())
+    };
+    let mut lockdown = plist::Value::from_reader(std::io::Cursor::new(lockdown))
+        .map_err(|_| invalid())?
+        .into_dictionary()
+        .ok_or_else(invalid)?;
+    let remote = plist::Value::from_reader(std::io::Cursor::new(remote))
+        .map_err(|_| invalid())?
+        .into_dictionary()
+        .ok_or_else(invalid)?;
+    if !["public_key", "private_key"].iter().all(|key| {
+        remote
+            .get(*key)
+            .and_then(plist::Value::as_data)
+            .is_some_and(|v| v.len() == 32)
+    }) || remote
+        .get("identifier")
+        .and_then(plist::Value::as_string)
+        .is_none_or(str::is_empty)
+    {
+        return Err(invalid());
+    }
+    lockdown.extend(remote);
+    Ok(plist_to_xml_bytes(&lockdown))
+}
+
 #[tauri::command]
 pub async fn delete_stored_rppairing(
     device_state: State<'_, DeviceInfoMutex>,
@@ -420,6 +492,7 @@ pub async fn delete_stored_rppairing(
             AppError::Storage("Failed to delete stored RPPairing".into(), e.to_string())
         })
     })?;
+    crate::wifi_rsd::forget_wifi_pairing(&app, &device.info.udid)?;
 
     Ok(())
 }

@@ -27,3 +27,4 @@ keys
 *.mobileprovision
 
 dockerfile
+/artifacts/

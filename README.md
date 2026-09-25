@@ -1,3 +1,21 @@
+> [!IMPORTANT]
+> **This is an unofficial fork of [iloader](https://github.com/nab138/iloader) by nab138.**
+> It is not affiliated with or endorsed by the original author. The official
+> project is at [iloader.app](https://iloader.app).
+>
+> The fork adds, for **Windows**:
+> - **Apple Watch companion apps:** apps that contain a Watch app are installed
+>   on the paired Apple Watch too, over USB or Wi-Fi.
+> - **Wi-Fi setup and installs:** set a phone up once over USB (**Set up Wi-Fi**),
+>   then install and renew over the local network without a cable.
+> - **Automatic renewal** of iPhone apps with saved accounts, before their 7-day
+>   signature expires, with tray controls and optional Windows startup. See
+>   [automatic renewal](docs/automatic-renewal.md).
+>
+> Download it from this fork's [releases](../../releases). It keeps its own data
+> and saved passwords, separate from the official iloader. Report problems with
+> the fork here, not to the original project. Building: [BUILDING.md](BUILDING.md).
+> The original README follows, kept for attribution.
 <a href="https://iloader.app">
   <picture align="left" >
     <source media="(prefers-color-scheme: dark)" srcset="/iloader.svg">
@@ -19,7 +37,7 @@
 
 Install SideStore (or other apps) and import your pairing file with ease
 
-**This repository and [iloader.app](https://iloader.app) are the only official ways to download iloader. There is also an unofficial [Homebrew cask](https://formulae.brew.sh/cask/iloader), an unofficial [AUR package](https://aur.archlinux.org/packages/iloader-bin), and an unofficial [Fedora COPR repository](https://copr.fedorainfracloud.org/coprs/anudeepd/iloader) maintained by the community. Do not download from any other sources or websites.**
+**The [upstream repository](https://github.com/nab138/iloader) and [iloader.app](https://iloader.app) are the official ways to download upstream iloader. There is also an unofficial [Homebrew cask](https://formulae.brew.sh/cask/iloader), an unofficial [AUR package](https://aur.archlinux.org/packages/iloader-bin), and an unofficial [Fedora COPR repository](https://copr.fedorainfracloud.org/coprs/anudeepd/iloader) maintained by the community. Do not download from any other sources or websites.**
 
 <img width="1918" height="998" alt="iloader0" src="https://github.com/user-attachments/assets/93cd135d-6d89-46ee-9b9f-12c596806911" />
 
@@ -82,7 +100,7 @@ Thank you for translating!
 3. Run `bun i` (or `npm i`)
 
 For development with hot reload: `bun tauri dev` (or `npm run tauri dev`)
-Make a production build: `bun tauri build` (or `npm run tauri build`)
+For this Windows fork, run the tests and build the executable with `./scripts/Build-Windows.ps1 -BuildExecutable`. See [BUILDING.md](BUILDING.md) for prerequisites.
 
 ## Credits
 

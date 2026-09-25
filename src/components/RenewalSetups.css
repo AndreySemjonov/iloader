@@ -1,0 +1,53 @@
+.renewal-setups { min-width: 0; }
+.managed-header, .managed-install, .managed-host, .managed-row { display: flex; align-items: center; gap: .8rem; }
+.managed-header { justify-content: space-between; flex-wrap: wrap; }
+.managed-header h2 { margin: 0; }
+.managed-header p { margin: .25rem 0 0; }
+.managed-install { flex-shrink: 0; }
+.managed-primary { background: var(--accent-primary, #0a84ff); color: white; font-weight: 650; }
+.managed-consent { max-width: 78ch; margin: .85rem 0 1.25rem; }
+.managed-host { justify-content: space-between; padding: .75rem 0; border-block: 1px solid var(--glass-border); font-size: .88rem; }
+.managed-host button { flex-shrink: 0; font-size: .85rem; }
+.managed-list { list-style: none; padding: 0; margin: 0; }
+.managed-list > li { border-bottom: 1px solid var(--glass-border); }
+.managed-row { min-height: 94px; padding: 1.05rem 0; }
+.managed-app-name { flex: 1; min-width: 0; }
+.managed-app-name h3 { margin: 0 0 .15rem; font-size: 1rem; font-weight: 600; overflow-wrap: anywhere; }
+.managed-app-phone, .managed-expiry { color: var(--text-muted); font-size: .8rem; }
+.managed-app-state { display: grid; gap: .3rem; justify-items: end; text-align: right; }
+.managed-status { font-size: .79rem; padding: .15rem .5rem; border: 1px solid var(--glass-border); border-radius: 5px; }
+.managed-status.enabled { color: #72d990; background: rgba(48,209,88,.07); }
+.managed-status.attention, .managed-status.incomplete { color: #ffc77e; background: rgba(255,165,35,.07); }
+.managed-status.paused, .managed-status.global_paused { color: #bbbcc4; }
+.managed-menu { position: relative; flex-shrink: 0; }
+.managed-menu summary { list-style: none; cursor: pointer; min-width: 36px; min-height: 36px; display: grid; place-items: center; border: 1px solid var(--glass-border); border-radius: 6px; font-size: 1.3rem; }
+.managed-menu summary::-webkit-details-marker { display: none; }
+.managed-menu summary:focus-visible, .managed-preferences summary:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 3px; }
+.managed-menu-content { position: absolute; right: 0; top: calc(100% + 5px); z-index: 5; min-width: 225px; padding: .35rem; border: 1px solid var(--glass-border); border-radius: 8px; background: var(--glass-surface-alt, #2c2c2e); box-shadow: 0 8px 28px rgba(0,0,0,.35); display: grid; }
+.managed-menu-content button { text-align: left; border: 0; background: transparent; padding: .6rem .7rem; font-size: .86rem; }
+.managed-menu-content button:hover:enabled { background: rgba(128,128,128,.18); }
+.managed-menu-content .managed-remove { color: #ff958e; }
+.managed-empty { text-align: center; padding: 2.5rem 1rem; color: var(--text-muted); }
+.managed-empty strong { color: inherit; font-size: 1rem; }
+.managed-empty p { font-size: .88rem; }
+.managed-error { border-left: 3px solid #d89647; padding: .5rem .8rem; background: rgba(255,165,35,.06); overflow-wrap: anywhere; }
+.managed-confirm, .managed-details { padding: 1rem; margin-bottom: 1rem; border: 1px solid var(--glass-border); border-radius: 8px; background: rgba(128,128,128,.04); font-size: .88rem; overflow-wrap: anywhere; }
+.managed-confirm button { margin-right: .5rem; }
+.managed-details h4 { margin-top: 0; }
+.managed-details dl { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(0, 2fr); gap: .5rem 1rem; }
+.managed-details dt { color: var(--text-muted); }
+.managed-details dd { margin: 0; user-select: text; }
+.managed-preferences { margin-top: 1rem; font-size: .86rem; }
+.managed-preferences > summary { cursor: pointer; color: var(--text-muted); padding: .5rem 0; }
+.renewal-check { display: flex; align-items: flex-start; gap: .5rem; margin: .8rem 0; font-size: .9rem; }
+.renewal-check input { flex: 0 0 auto; margin-top: .15rem; }
+.renewal-notice { padding: .7rem; border-left: 3px solid #d89647; }
+@media (max-width: 560px) {
+ .managed-header { align-items: stretch; }
+ .managed-row { flex-wrap: wrap; gap: .65rem; }
+ .managed-app-name { flex-basis: calc(100% - 50px); }
+ .managed-app-state { order: 3; width: 100%; justify-items: start; text-align: left; }
+ .managed-host { align-items: flex-start; }
+ .managed-details dl { grid-template-columns: 1fr; gap: .2rem; }
+ .managed-details dd { margin-bottom: .6rem; }
+}

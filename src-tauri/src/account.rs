@@ -8,20 +8,19 @@ use isideload::{
         developer_session::DeveloperSession,
     },
     sideload::{SideloaderBuilder, builder::MaxCertsBehavior, sideloader::Sideloader},
-    util::callbacks::MaxCertsCallbackBox,
 };
 use keyring::Entry;
 use rootcause::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Listener, State, Window};
+use tauri::{AppHandle, Emitter, Listener, Manager, State, Window};
 use tauri_plugin_store::StoreExt;
 use tracing::debug;
 
 use crate::{
     error::AppError,
-    secure_storage::create_sideloading_storage,
+    secure_storage::{KEYRING_SERVICE, create_sideloading_storage},
     sideload::{SideloaderGuard, SideloaderMutex},
 };
 
@@ -35,12 +34,12 @@ pub async fn login_new(
     anisette_server: String,
     save_credentials: bool,
 ) -> Result<(), AppError> {
-    let account = login(&handle, window, &email, &password, anisette_server).await?;
+    let account = login(&handle, &window, &email, &password, anisette_server).await?;
     let mut sideloader_guard = sideloader_state.lock().unwrap();
     *sideloader_guard = Some(account);
 
     if save_credentials {
-        let pass_entry = Entry::new("iloader", &email).map_err(|e| {
+        let pass_entry = Entry::new(KEYRING_SERVICE, &email).map_err(|e| {
             AppError::KeyringWithMessage(
                 "Failed to create entry for credentials".into(),
                 e.to_string(),
@@ -75,16 +74,20 @@ pub async fn login_stored(
     anisette_server: String,
     sideloader_state: State<'_, SideloaderMutex>,
 ) -> Result<(), AppError> {
-    let pass_entry = Entry::new("iloader", &email).map_err(|e| {
+    let pass_entry = Entry::new(KEYRING_SERVICE, &email).map_err(|e| {
         AppError::KeyringWithMessage(
             "Failed to create keyring entry for credentials".to_string(),
             e.to_string(),
         )
     })?;
-    let password = pass_entry.get_password().map_err(|e| {
-        AppError::KeyringWithMessage("Failed to get credentials".to_string(), e.to_string())
-    })?;
-    let account = login(&handle, window, &email, &password, anisette_server).await?;
+    let Some(password) = saved_password(pass_entry.get_password())? else {
+        forget_saved_login(&handle, &email)?;
+        return Err(AppError::KeyringWithMessage(
+            "Saved credentials are missing".into(),
+            "Sign in again and choose Save credentials to enable saved login.".into(),
+        ));
+    };
+    let account = login(&handle, &window, &email, &password, anisette_server).await?;
     let mut sideloader_guard = sideloader_state.lock().unwrap();
     *sideloader_guard = Some(account);
 
@@ -93,6 +96,52 @@ pub async fn login_stored(
 
 #[tauri::command]
 pub fn delete_account(handle: AppHandle, email: String) -> Result<(), AppError> {
+    let directory = handle.path().app_data_dir().map_err(|e| {
+        AppError::Filesystem("Failed to locate app data".into(), e.to_string())
+    })?;
+    crate::renewal::management::Catalog::acquire(&directory)
+        .and_then(|catalog| catalog.forget_account(&email))
+        .map_err(AppError::Misc)?;
+    let pass_entry = Entry::new(KEYRING_SERVICE, &email).map_err(|e| {
+        AppError::KeyringWithMessage(
+            "Failed to create keyring entry for credentials".into(),
+            e.to_string(),
+        )
+    })?;
+    credential_deleted_or_absent(pass_entry.delete_credential())?;
+    // The signing private key is stored per Apple ID (lowercase, as in login()).
+    create_sideloading_storage(&handle)?
+        .delete(&isideload::sideload::cert_identity::private_key_storage_key(
+            &email.to_lowercase(),
+        ))
+        .map_err(|e| AppError::Storage("Failed to delete signing key".into(), e.to_string()))?;
+    // Remove metadata only after deletion succeeded or the credential was already
+    // absent. A keyring failure must not hide a credential that still exists.
+    forget_saved_login(&handle, &email)
+}
+
+fn saved_password(result: Result<String, keyring::Error>) -> Result<Option<String>, AppError> {
+    match result {
+        Ok(password) => Ok(Some(password)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(error) => Err(AppError::KeyringWithMessage(
+            "Failed to get credentials".into(),
+            error.to_string(),
+        )),
+    }
+}
+
+fn credential_deleted_or_absent(result: Result<(), keyring::Error>) -> Result<(), AppError> {
+    match result {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(error) => Err(AppError::KeyringWithMessage(
+            "Failed to delete credentials".into(),
+            error.to_string(),
+        )),
+    }
+}
+
+fn forget_saved_login(handle: &AppHandle, email: &str) -> Result<(), AppError> {
     let store = handle
         .store("data.json")
         .map_err(|e| AppError::Misc(format!("Failed to get store: {:?}", e)))?;
@@ -104,16 +153,44 @@ pub fn delete_account(handle: AppHandle, email: String) -> Result<(), AppError> 
         .unwrap_or_else(std::vec::Vec::new);
     existing_ids.retain(|v| v.as_str().is_none_or(|s| s != email));
     store.set("ids", Value::Array(existing_ids));
-    let pass_entry = Entry::new("iloader", &email).map_err(|e| {
-        AppError::KeyringWithMessage(
-            "Failed to create keyring entry for credentials".into(),
-            e.to_string(),
-        )
-    })?;
-    pass_entry.delete_credential().map_err(|e| {
-        AppError::KeyringWithMessage("Failed to delete credentials".into(), e.to_string())
-    })?;
+    store
+        .save()
+        .map_err(|e| AppError::Storage("Unable to save account list".into(), e.to_string()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod credential_tests {
+    use super::*;
+
+    #[test]
+    fn stale_metadata_requires_sign_in_without_attempting_authentication() {
+        assert!(
+            saved_password(Err(keyring::Error::NoEntry))
+                .unwrap()
+                .is_none()
+        );
+        assert!(credential_deleted_or_absent(Err(keyring::Error::NoEntry)).is_ok());
+        assert!(credential_deleted_or_absent(Ok(())).is_ok());
+    }
+
+    #[test]
+    fn real_keyring_failures_are_not_treated_as_missing_credentials() {
+        assert!(
+            saved_password(Err(keyring::Error::Invalid(
+                "test".into(),
+                "unavailable".into()
+            )))
+            .is_err()
+        );
+        assert!(
+            credential_deleted_or_absent(Err(keyring::Error::Invalid(
+                "test".into(),
+                "unavailable".into()
+            )))
+            .is_err()
+        );
+    }
 }
 
 #[tauri::command]
@@ -133,7 +210,7 @@ pub fn invalidate_account(sideloader_state: State<'_, SideloaderMutex>) {
 
 #[tauri::command]
 pub fn reset_anisette_state() -> Result<bool, AppError> {
-    let state_entry = Entry::new("iloader", "anisette_state").map_err(|e| {
+    let state_entry = Entry::new(KEYRING_SERVICE, "anisette_state").map_err(|e| {
         AppError::KeyringWithMessage(
             "Failed to create keyring entry for anisette".into(),
             e.to_string(),
@@ -158,11 +235,11 @@ pub fn reset_anisette_state() -> Result<bool, AppError> {
 
 async fn login(
     app: &AppHandle,
-    window: Window,
+    window: &Window,
     email: &str,
     password: &str,
     anisette_server: String,
-) -> Result<Sideloader<MaxCertsCallbackBox>, AppError> {
+) -> Result<Sideloader, AppError> {
     let tfa_closure = {
         let window_clone = window.clone();
         move |params: TwoFactorCallbackParams| {
@@ -211,41 +288,42 @@ async fn login(
 
     debug!("Created developer session");
 
-    let max_certs_callback: MaxCertsCallbackBox =
-        Box::new(move |certs: Vec<DevelopmentCertificate>| {
-            let window_clone = window.clone();
-            Box::pin(async move {
-                let cert_infos: Vec<CertificateInfo> = certs
-                    .iter()
-                    .map(|cert| CertificateInfo {
-                        name: cert.name.clone(),
-                        certificate_id: cert.certificate_id.clone(),
-                        serial_number: cert.serial_number.clone(),
-                        machine_name: cert.machine_name.clone(),
-                        machine_id: cert.machine_id.clone(),
-                    })
-                    .collect();
-                window_clone.emit("max-certs-reached", cert_infos)?;
+    let max_certs_callback = {
+        let window_clone = window.clone();
+        move |certs: &Vec<DevelopmentCertificate>| -> Option<Vec<String>> {
+            let cert_infos: Vec<CertificateInfo> = certs
+                .iter()
+                .map(|cert| CertificateInfo {
+                    name: cert.name.clone(),
+                    certificate_id: cert.certificate_id.clone(),
+                    serial_number: cert.serial_number.clone(),
+                    machine_name: cert.machine_name.clone(),
+                    machine_id: cert.machine_id.clone(),
+                })
+                .collect();
+            window_clone
+                .emit("max-certs-reached", cert_infos)
+                .expect("Failed to emit max-certs-reached event");
 
-                let (tx, rx) = std::sync::mpsc::channel::<Option<Vec<String>>>();
-                let handler_id = window_clone.listen("max-certs-response", move |event| {
-                    let certs = event.payload();
-                    let certs = serde_json::from_str::<Option<Vec<String>>>(certs).unwrap_or(None);
-                    let _ = tx.send(certs);
-                });
+            let (tx, rx) = std::sync::mpsc::channel::<Option<Vec<String>>>();
+            let handler_id = window_clone.listen("max-certs-response", move |event| {
+                let certs = event.payload();
+                let certs = serde_json::from_str::<Option<Vec<String>>>(certs).unwrap_or(None);
+                let _ = tx.send(certs);
+            });
 
-                let result = rx.recv_timeout(Duration::from_secs(300));
-                window_clone.unlisten(handler_id);
-                Ok(result?)
-            })
-        });
+            let result = rx.recv_timeout(Duration::from_secs(300));
+            window_clone.unlisten(handler_id);
+            result.unwrap_or(None)
+        }
+    };
 
     // TODO: Team Selection
 
     let sideloader = SideloaderBuilder::new(dev_session, email.to_lowercase())
         .machine_name("iloader".into())
         .storage(create_sideloading_storage(app)?)
-        .max_certs_behavior(MaxCertsBehavior::Prompt(max_certs_callback))
+        .max_certs_behavior(MaxCertsBehavior::Prompt(Box::new(max_certs_callback)))
         .build();
 
     debug!("Built sideloader");

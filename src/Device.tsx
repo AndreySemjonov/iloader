@@ -6,13 +6,15 @@ import { useTranslation } from "react-i18next";
 import { Modal } from "./components/Modal";
 import { useError } from "./ErrorContext";
 import { AppError } from "./errors";
+import { WifiPairingRepair } from "./components/WifiPairingRepair";
 
 export type DeviceInfo = {
   name: string;
   id: number;
-  uuid: string;
+  udid: string;
   connectionType: "USB" | "Network" | "Unknown";
   version: string;
+  networkAddress?: string | null;
 };
 
 export const Device = ({
@@ -26,8 +28,18 @@ export const Device = ({
 }) => {
   const { t } = useTranslation();
   const [devices, setDevices] = useState<DeviceInfo[]>([]);
+  const [settingUpWifi, setSettingUpWifi] = useState(false);
   const [waitingToPair, setWaitingToPair] = useState<DeviceInfo | null>(null);
   const [showPairingModal, setShowPairingModal] = useState(false);
+  const [repairBusy, setRepairBusy] = useState(false);
+  const suppressAutoSelection = useRef(false);
+  const repairActive = useRef(false);
+  const deviceRefreshGeneration = useRef(0);
+  const changeRepairBusy = useCallback((busy: boolean) => {
+    repairActive.current = busy;
+    deviceRefreshGeneration.current += 1;
+    setRepairBusy(busy);
+  }, []);
 
   const listingDevices = useRef<boolean>(false);
   const pairingRequestId = useRef<number>(0);
@@ -49,13 +61,13 @@ export const Device = ({
   }, [clearPairingModalTimer]);
 
   const selectDevice = useCallback(
-    (device: DeviceInfo | null) => {
+    (device: DeviceInfo | null, showPairingProgress = true) => {
       const requestId = ++pairingRequestId.current;
       clearPairingModalTimer();
       setShowPairingModal(false);
       setWaitingToPair(device);
 
-      if (device) {
+      if (device && showPairingProgress) {
         pairingModalTimer.current = setTimeout(() => {
           if (pairingRequestId.current === requestId) {
             setShowPairingModal(true);
@@ -91,7 +103,8 @@ export const Device = ({
   );
 
   const loadDevices = useCallback(async () => {
-    if (listingDevices.current) return;
+    if (listingDevices.current || repairActive.current) return;
+    const generation = deviceRefreshGeneration.current;
     const promise = new Promise<number>(async (resolve, reject) => {
       listingDevices.current = true;
       try {
@@ -109,15 +122,24 @@ export const Device = ({
         }
 
         setDevices(devices);
-        if (selectedDevice) {
-          const stillAvailable = devices.find(
-            (d) => d.id === selectedDevice.id,
+        const maySelect = !repairActive.current && generation === deviceRefreshGeneration.current;
+        if (selectedDevice && maySelect) {
+          const exactConnection = devices.find(
+            (d) => d.udid === selectedDevice.udid && d.id === selectedDevice.id,
           );
+          const stillAvailable =
+            exactConnection ??
+            devices.find((d) => d.udid === selectedDevice.udid);
           if (!stillAvailable) {
             selectDevice(null);
+          } else if (
+            stillAvailable.id !== selectedDevice.id ||
+            stillAvailable.connectionType !== selectedDevice.connectionType
+          ) {
+            selectDevice(stillAvailable, false);
           }
         }
-        if (devices.length > 0) {
+        if (maySelect && !selectedDevice && devices.length > 0 && !suppressAutoSelection.current) {
           const devicesWithPairing = await Promise.all(
             devices.map(async (device) => {
               const hasPairing = await invoke<boolean>("has_stored_rppairing", {
@@ -130,15 +152,19 @@ export const Device = ({
             .then((results) =>
               results.filter((d): d is DeviceInfo => d !== null),
             );
-          if (devicesWithPairing.length > 0) {
-            selectDevice(devicesWithPairing[0]);
+          const firstPairedDevice = devicesWithPairing[0];
+          if (firstPairedDevice && !repairActive.current && generation === deviceRefreshGeneration.current) {
+            selectDevice(
+              firstPairedDevice,
+              firstPairedDevice.connectionType !== "Network",
+            );
           }
         }
         listingDevices.current = false;
         resolve(devices.length);
       } catch (e) {
         setDevices([]);
-        selectDevice(null);
+        if (!repairActive.current && generation === deviceRefreshGeneration.current) selectDevice(null);
         listingDevices.current = false;
         reject(e);
       }
@@ -154,7 +180,7 @@ export const Device = ({
       },
       error: (e) => err(t("device.unable_load_devices_prefix"), e),
     });
-  }, [setDevices, selectDevice, t]);
+  }, [selectedDevice, selectDevice, t, repairBusy]);
   useEffect(() => {
     loadDevices();
   }, [loadDevices]);
@@ -203,18 +229,19 @@ export const Device = ({
           <div>{t("device.no_devices_found_period")}</div>
         )}
         {devices.map((device) => {
-          const isActive = selectedDevice?.id === device.id;
+          const isActive =
+            selectedDevice?.udid === device.udid && selectedDevice?.id === device.id;
           return (
             <button
-              key={device.id}
+              key={`${device.udid}:${device.id}`}
               className={"device-card card" + (isActive ? " active" : "")}
               onClick={() => selectDevice(device)}
-              disabled={waitingToPair !== null}
+              disabled={waitingToPair !== null || repairBusy}
             >
               <div className="device-meta">
                 <span className="device-name">{device.name}</span>
                 <span className="device-connection">
-                  {device.connectionType}
+                  {device.networkAddress ? t("wifi.direct") : device.connectionType}
                 </span>
               </div>
               {isActive && (
@@ -225,7 +252,36 @@ export const Device = ({
             </button>
           );
         })}
-        <button disabled={waitingToPair !== null} onClick={loadDevices}>
+        {selectedDevice?.connectionType === "USB" && !selectedDevice.networkAddress && (
+          <button
+            title={t("wifiSetup.hint")}
+            disabled={waitingToPair !== null || repairBusy || settingUpWifi}
+            onClick={async () => {
+              setSettingUpWifi(true);
+              const setup = invoke("setup_wifi");
+              toast.promise(setup, {
+                loading: t("wifiSetup.working"),
+                success: t("wifiSetup.done"),
+                error: (e) => err(t("wifiSetup.failed"), e),
+              });
+              try {
+                await setup;
+              } catch {
+                // The toast already reports the failure.
+              } finally {
+                setSettingUpWifi(false);
+              }
+            }}
+          >
+            {t("wifiSetup.button")}
+          </button>
+        )}
+        <WifiPairingRepair device={selectedDevice} devices={devices} disabled={waitingToPair !== null}
+          onBusy={changeRepairBusy} onUncertain={() => {
+            suppressAutoSelection.current = true;
+            setSelectedDevice(null);
+          }} />
+        <button disabled={waitingToPair !== null || repairBusy} onClick={loadDevices}>
           {t("common.refresh")}
         </button>
       </div>
